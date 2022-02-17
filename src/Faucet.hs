@@ -151,7 +151,7 @@ grab fp = do
     returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
 
 grabWithError :: FaucetParams -> Contract w s Text ()
-grabWithError fp = handleError (\_ -> logError @String "Script has not money") (grab fp)
+grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
 
 -- Схема
 -- Schema
@@ -189,4 +189,4 @@ updateFaucet (StartParams amount newKeys) = do
 -- Старт раздающего
 -- Faucet start
 startFaucet :: StartParams -> Contract w s Text ()
-startFaucet up = handleError (\_ -> logError @String "User has not money for script") (createFaucetContract >> updateFaucet up)
+startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (createFaucetContract >> updateFaucet up)
