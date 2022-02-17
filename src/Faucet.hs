@@ -44,7 +44,7 @@ data FaucetDatum = FaucetDatum
 PlutusTx.unstableMakeIsData ''FaucetDatum
 
 
-data FaucetRedeemer =  Use | Update deriving (Show, ToJSON, FromJSON,Generic, ToSchema)
+data FaucetRedeemer =  Key1 | Key2 | Another deriving (Show, ToJSON, FromJSON,Generic, ToSchema)
 
 
 PlutusTx.unstableMakeIsData ''FaucetRedeemer
@@ -62,9 +62,8 @@ mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input"
 
 
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx = case (red,dat) of 
-                                    (Update, _) -> True
-                                    (Use  , _) -> True
+mkFaucetValidator dat red ctx = case red of
+                              _ -> True
 
                                     
     where
@@ -126,22 +125,21 @@ grab fp = do
                 logInfo @String $ "Right api key founded"
                 let lookups = Constraints.unspentOutputs utxos <>
                               Constraints.otherScript (faucetValidator)
-                    tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData Use
+                    tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData Key1
                 ledgerTx <- submitTxConstraintsWith @Fauceting lookups tx
                 void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
                 logInfo @String $ "collected gifts"
-    something ->  logInfo @String $ "no faucets "  ++ (show listOfDatums)
+    _ ->  logInfo @String $ "no faucets "  ++ (show listOfDatums)
 
 
-type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "update" UpdateParams .\/ Endpoint "start" ()
+type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" UpdateParams
 
 
 endpoints :: Contract () FaucetSchema Text ()
-endpoints = awaitPromise (grab' `select` start' `select` update') >> endpoints
+endpoints = awaitPromise (grab' `select` start') >> endpoints
   where
     grab' = endpoint @"grab" grab
-    update' = endpoint @"update" updateFaucet
-    start' = endpoint @"start" $ const startFaucet
+    start' = endpoint @"start" startFaucet'
 
 
 
@@ -168,6 +166,11 @@ updateFaucet (UpdateParams amount newKeys) = do
       logInfo @String $ "set new keys to " ++ (show $ fstApi newKeys) ++ " and " ++ (show $ sndApi newKeys)
       logInfo @String $ "script address: " ++ show faucetAddress
     _ -> logError @String "faucet already started"
+
+
+startFaucet' :: UpdateParams -> Contract w s Text ()
+startFaucet' up = startFaucet >> updateFaucet up
+
       
     
 
