@@ -29,8 +29,6 @@ import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
 import Prelude (Semigroup (..), Show (..), String)
 
---import Playground.Contract
-
 -- Датум, храним в нем оба два ключа апи
 -- Datum, contains api keys
 data FaucetDatum = FaucetDatum
@@ -41,42 +39,17 @@ data FaucetDatum = FaucetDatum
 
 PlutusTx.unstableMakeIsData ''FaucetDatum
 
--- Редимер, отражает варианты выплат (пока дорабатываю валидатор)
--- Redeemer, contains payment options (validator in works)
+-- Редимер, отражает варианты выплат
+-- Redeemer, contains payment options
 data FaucetRedeemer = Key1 | Key2 | AnotherKey deriving (Show, ToJSON, FromJSON, Generic, ToSchema)
 
 PlutusTx.unstableMakeIsData ''FaucetRedeemer
 
-{-mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input" hasOneScriptInput
-    where
-        info :: TxInfo
-        info = scriptContextTxInfo ctx
-
-        hasOneScriptInput :: Bool
-        hasOneScriptInput = let
-                                xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
-                            in length xs == 1 -}
-
--- Валидатор, пока принимает все. (в разработке)
--- Validator, always accept all. (in works)
+-- Валидатор,  принимает все.
+-- Validator, always accept all.
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
 mkFaucetValidator _ _ _ = True
 
-{-} traceIfFalse "has more the one script input" hasOneScriptInput
-    && traceIfFalse "has no money" outputValue
-  where
-    info :: TxInfo
-    info = scriptContextTxInfo ctx
-
-    hasOneScriptInput :: Bool
-    hasOneScriptInput =
-      let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
-       in length xs == 1
-
-    outputValue :: Bool
-    outputValue = any (== 1_000_000) $ (getLovelace . fromValue . txOutValue) <$> txInfoOutputs info
--}
 ------------------------------------------------------------------
 data Fauceting
 
