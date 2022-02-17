@@ -17,20 +17,17 @@ module Faucet where
 import Control.Monad hiding (fmap)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map as Map
-import Data.Text (Text, pack)
+import Data.Text (Text)
 import GHC.Generics (Generic)
 import Ledger hiding (singleton)
 import Ledger.Ada as Ada
 import Ledger.Constraints as Constraints
 import qualified Ledger.Typed.Scripts as Scripts
-import Ledger.Value
 import Playground.Contract (ToSchema)
 import Plutus.Contract as Contract
-import qualified Plutus.Contracts.Currency as PCC
 import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
 import Prelude (Semigroup (..), Show (..), String)
-import qualified Prelude
 
 --import Playground.Contract
 
@@ -64,15 +61,16 @@ mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input"
 -- Валидатор, пока принимает все. (в разработке)
 -- Validator, always accept all. (in works)
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx = True
-  where
-    info :: TxInfo
-    info = scriptContextTxInfo ctx
+mkFaucetValidator _ _ _ = True
 
-    hasOneScriptInput :: Bool
-    hasOneScriptInput =
-      let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
-       in length xs == 1
+{-} where
+   info :: TxInfo
+   info = scriptContextTxInfo ctx
+
+   hasOneScriptInput :: Bool
+   hasOneScriptInput =
+     let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
+      in length xs == 1 -}
 
 ------------------------------------------------------------------
 data Fauceting
@@ -113,14 +111,16 @@ findFaucet utxos = Map.toList $ Map.filter f utxos
 
 -- Еще одна функция фильтрации. Использовалась для дополнительного логгирования. Можно убрать.
 -- One more filter function. Was used for an additional log. Can be removed.
+findRightFaucet :: (Map.Map TxOutRef ChainIndexTxOut) -> [Maybe FaucetDatum]
 findRightFaucet utxos = f <$> Map.toList utxos
   where
-    f (oref, ch) = case _ciTxOutDatum ch of
+    f (_, ch) = case _ciTxOutDatum ch of
       Left _ -> Nothing
       Right (Datum d) -> PlutusTx.fromBuiltinData d :: Maybe FaucetDatum
 
 -- Функция для опредленеия редимера.
 -- A function for determining the redeemer.
+selectRedeemer :: Integer -> ChainIndexTxOut -> Maybe (FaucetRedeemer, FaucetDatum)
 selectRedeemer k ch = case _ciTxOutDatum ch of
   Left _ -> Nothing
   Right (Datum d) -> case (PlutusTx.fromBuiltinData d :: Maybe FaucetDatum) of
@@ -174,7 +174,7 @@ grab fp = do
 
 -- Схема
 -- Schema
-type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" UpdateParams
+type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParams
 
 endpoints :: Contract () FaucetSchema Text ()
 endpoints = awaitPromise (grab' `select` start') >> endpoints
@@ -191,10 +191,10 @@ createFaucetContract = do
 
 -- Изменение параметров. Добавление Ada и ключей.
 -- Changing Parameters. Adding Ada and keys.
-data UpdateParams = UpdateParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, ToJSON, FromJSON, ToSchema)
+data StartParams = StartParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, ToJSON, FromJSON, ToSchema)
 
-updateFaucet :: UpdateParams -> Contract w s Text ()
-updateFaucet (UpdateParams amount newKeys) = do
+updateFaucet :: StartParams -> Contract w s Text ()
+updateFaucet (StartParams amount newKeys) = do
   m <- utxosAt faucetAddress
   let c = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData newKeys) $ Ada.lovelaceValueOf amount
   case Map.toList m of
@@ -207,5 +207,5 @@ updateFaucet (UpdateParams amount newKeys) = do
 
 -- Старт раздающего
 -- Faucet start
-startFaucet :: UpdateParams -> Contract w s Text ()
+startFaucet :: StartParams -> Contract w s Text ()
 startFaucet up = createFaucetContract >> updateFaucet up
