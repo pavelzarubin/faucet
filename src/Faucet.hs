@@ -63,15 +63,20 @@ mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input"
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
 mkFaucetValidator _ _ _ = True
 
-{-} where
-   info :: TxInfo
-   info = scriptContextTxInfo ctx
+{-} traceIfFalse "has more the one script input" hasOneScriptInput
+    && traceIfFalse "has no money" outputValue
+  where
+    info :: TxInfo
+    info = scriptContextTxInfo ctx
 
-   hasOneScriptInput :: Bool
-   hasOneScriptInput =
-     let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
-      in length xs == 1 -}
+    hasOneScriptInput :: Bool
+    hasOneScriptInput =
+      let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
+       in length xs == 1
 
+    outputValue :: Bool
+    outputValue = any (== 1_000_000) $ (getLovelace . fromValue . txOutValue) <$> txInfoOutputs info
+-}
 ------------------------------------------------------------------
 data Fauceting
 
@@ -172,6 +177,9 @@ grab fp = do
     -- Calculation of change, according to the api key
     returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
 
+grabWithError :: FaucetParams -> Contract w s Text ()
+grabWithError fp = handleError (\_ -> logError @String "Script has not money") (grab fp)
+
 -- Схема
 -- Schema
 type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParams
@@ -179,7 +187,7 @@ type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParam
 endpoints :: Contract () FaucetSchema Text ()
 endpoints = awaitPromise (grab' `select` start') >> endpoints
   where
-    grab' = endpoint @"grab" grab
+    grab' = endpoint @"grab" grabWithError
     start' = endpoint @"start" startFaucet
 
 -- Создание контракта раздачи
@@ -208,4 +216,4 @@ updateFaucet (StartParams amount newKeys) = do
 -- Старт раздающего
 -- Faucet start
 startFaucet :: StartParams -> Contract w s Text ()
-startFaucet up = createFaucetContract >> updateFaucet up
+startFaucet up = handleError (\_ -> logError @String "User has not money for script") (createFaucetContract >> updateFaucet up)
