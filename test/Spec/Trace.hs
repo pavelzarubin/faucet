@@ -71,7 +71,8 @@ runMyTraceSuc :: IO ()
 runMyTraceSuc = runEmulatorTraceIO' def emuConfSuc myTraceSuc
 
 ------------------------------------------------------------------------------------
-
+-- Tests with failed fauceting. No ada on the script
+-- Тесты с неудачной раздачей. Нет ada на скрипте
 myTraceFail1 :: EmulatorTrace ()
 myTraceFail1 = do
   Extras.logInfo $ "START TRACE"
@@ -113,7 +114,8 @@ testsFail1 =
     myTraceFail1
 
 ------------------------------------------------------------------------------
-
+-- Tests with failed fauceting. No ada on the script for paying to user
+-- Тесты с неудачной раздачей. Нет достаточного количества ada на скрипте, чтобы отдать пользователю.
 myTraceFail2 :: EmulatorTrace ()
 myTraceFail2 = do
   Extras.logInfo $ "START TRACE"
