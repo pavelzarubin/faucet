@@ -1,56 +1,57 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NoImplicitPrelude     #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE NumericUnderscores    #-}
-
+{-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE NoImplicitPrelude #-}
 
 module Faucet where
 
-import           Control.Monad        hiding (fmap)
-import           Data.Aeson           (FromJSON, ToJSON)
-import qualified Data.Map             as Map
-import           Data.Text            (Text,pack)
-import           GHC.Generics         (Generic)
-import           Ledger               hiding (singleton)
-import           Ledger.Constraints   as Constraints
+import Control.Monad hiding (fmap)
+import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Map as Map
+import Data.Text (Text, pack)
+import GHC.Generics (Generic)
+import Ledger hiding (singleton)
+import Ledger.Ada as Ada
+import Ledger.Constraints as Constraints
 import qualified Ledger.Typed.Scripts as Scripts
-import           Ledger.Ada           as Ada
-import           Ledger.Value
-import           Playground.Contract  (ToSchema)
-import           Plutus.Contract      as Contract
-import qualified PlutusTx
-import           PlutusTx.Prelude     hiding (Semigroup(..), unless)
-import           Prelude              (Semigroup (..), Show (..), String)
-import qualified Prelude
- 
+import Ledger.Value
+import Playground.Contract (ToSchema)
+import Plutus.Contract as Contract
 import qualified Plutus.Contracts.Currency as PCC
+import qualified PlutusTx
+import PlutusTx.Prelude hiding (Semigroup (..), unless)
+import Prelude (Semigroup (..), Show (..), String)
+import qualified Prelude
+
 --import Playground.Contract
 
+-- Датум, храним в нем оба два ключа апи
+-- Datum, contains api keys
 data FaucetDatum = FaucetDatum
-                    { fstApi :: !Integer
-                    , sndApi :: !Integer
-                    } deriving (Show, ToJSON, FromJSON,Generic, ToSchema)
-
+  { fstApi :: !Integer,
+    sndApi :: !Integer
+  }
+  deriving (Show, ToJSON, FromJSON, Generic, ToSchema)
 
 PlutusTx.unstableMakeIsData ''FaucetDatum
 
-
-data FaucetRedeemer =  Key1 | Key2 | Another deriving (Show, ToJSON, FromJSON,Generic, ToSchema)
-
+-- Редимер, отражает варианты выплат (пока дорабатываю валидатор)
+-- Redeemer, contains payment options (validator in works)
+data FaucetRedeemer = Key1 | Key2 | AnotherKey deriving (Show, ToJSON, FromJSON, Generic, ToSchema)
 
 PlutusTx.unstableMakeIsData ''FaucetRedeemer
 
 {-mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input" hasOneScriptInput 
+mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input" hasOneScriptInput
     where
         info :: TxInfo
         info = scriptContextTxInfo ctx
@@ -60,37 +61,36 @@ mkFaucetValidator dat red ctx = traceIfFalse "expected exactly one script input"
                                 xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
                             in length xs == 1 -}
 
-
+-- Валидатор, пока принимает все. (в разработке)
+-- Validator, always accept all. (in works)
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx = case red of
-                              _ -> True
+mkFaucetValidator dat red ctx = True
+  where
+    info :: TxInfo
+    info = scriptContextTxInfo ctx
 
-                                    
-    where
-        info :: TxInfo
-        info = scriptContextTxInfo ctx
+    hasOneScriptInput :: Bool
+    hasOneScriptInput =
+      let xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
+       in length xs == 1
 
-        hasOneScriptInput :: Bool
-        hasOneScriptInput = let
-                                xs = filter (isJust . Ledger.toValidatorHash . txOutAddress . txInInfoResolved) $ txInfoInputs info
-                            in length xs == 1 
-
+------------------------------------------------------------------
 data Fauceting
+
 instance Scripts.ValidatorTypes Fauceting where
-    type instance DatumType Fauceting = FaucetDatum
-    type instance RedeemerType Fauceting = FaucetRedeemer
+  type DatumType Fauceting = FaucetDatum
+  type RedeemerType Fauceting = FaucetRedeemer
 
 typedValidator :: Scripts.TypedValidator Fauceting
-typedValidator = Scripts.mkTypedValidator @Fauceting
-    $$(PlutusTx.compile [|| mkFaucetValidator ||])
-    $$(PlutusTx.compile [|| wrap ||])
-        where
-            wrap = Scripts.wrapValidator @FaucetDatum @FaucetRedeemer
-
-
+typedValidator =
+  Scripts.mkTypedValidator @Fauceting
+    $$(PlutusTx.compile [||mkFaucetValidator||])
+    $$(PlutusTx.compile [||wrap||])
+  where
+    wrap = Scripts.wrapValidator @FaucetDatum @FaucetRedeemer
 
 faucetValidator :: Validator
-faucetValidator = Scripts.validatorScript  typedValidator
+faucetValidator = Scripts.validatorScript typedValidator
 
 faucetAddress :: Address
 faucetAddress = scriptAddress faucetValidator
@@ -98,62 +98,100 @@ faucetAddress = scriptAddress faucetValidator
 valHash :: ValidatorHash
 valHash = Scripts.validatorHash typedValidator
 
+------------------------------------------------------------------
 
-findFaucet k utxos  = Map.toList $ Map.filter f utxos
+-- Функция фильтрации UTxO. Ищет только те, которые соответсвуют нашему датуму
+-- Filter function. The function searches for UTXOs that match the datum
+findFaucet :: (Map.Map TxOutRef ChainIndexTxOut) -> [(TxOutRef, ChainIndexTxOut)]
+findFaucet utxos = Map.toList $ Map.filter f utxos
   where
     f = \ch -> case _ciTxOutDatum ch of
-              Left _ -> False
-              Right (Datum d) -> case (PlutusTx.fromBuiltinData d :: Maybe FaucetDatum) of
-                                    Nothing -> False
-                                    Just (FaucetDatum k1 k2)-> k1 == k || k2 == k
-findRightFaucet utxos  = f <$> Map.toList utxos
-  where f (oref,ch) = case _ciTxOutDatum ch of
-              Left _ -> Nothing
-              Right (Datum d) -> PlutusTx.fromBuiltinData d :: Maybe FaucetDatum
+      Left _ -> False
+      Right (Datum d) -> case (PlutusTx.fromBuiltinData d :: Maybe FaucetDatum) of
+        Nothing -> False
+        Just _ -> True
 
+-- Еще одна функция фильтрации. Использовалась для дополнительного логгирования. Можно убрать.
+-- One more filter function. Was used for an additional log. Can be removed.
+findRightFaucet utxos = f <$> Map.toList utxos
+  where
+    f (oref, ch) = case _ciTxOutDatum ch of
+      Left _ -> Nothing
+      Right (Datum d) -> PlutusTx.fromBuiltinData d :: Maybe FaucetDatum
 
+-- Функция для опредленеия редимера.
+-- A function for determining the redeemer.
+selectRedeemer k ch = case _ciTxOutDatum ch of
+  Left _ -> Nothing
+  Right (Datum d) -> case (PlutusTx.fromBuiltinData d :: Maybe FaucetDatum) of
+    Nothing -> Nothing
+    Just (FaucetDatum k1 k2) ->
+      if k1 == k
+        then Just (Key1, (FaucetDatum k1 k2))
+        else
+          if k2 == k
+            then Just (Key2, (FaucetDatum k1 k2))
+            else Just (AnotherKey, (FaucetDatum k1 k2))
+
+-- Апи ключ, который используем когда хотим получить Ada
+-- The api key we use when we want to get Ada
 newtype FaucetParams = FaucetParams {fpApiKey :: Integer} deriving (Generic, ToJSON, FromJSON, ToSchema)
 
-grab :: FaucetParams -> Contract w s Text () 
+-- Функция grab. Получение Ada от скрипта
+-- Grab function. Getting Ada from a script
+grab :: FaucetParams -> Contract w s Text ()
 grab fp = do
-  pkh <- Contract.ownPaymentPubKeyHash
-  utxos <- utxosAt faucetAddress
-  let listOfOrefAndCh =  findFaucet (fpApiKey fp) utxos
+  utxos <- utxosAt faucetAddress -- Получение неизрасходованных выходов транзакции по адресу. Get the unspent transaction outputs at an address.
+  let listOfOrefAndCh = findFaucet utxos -- Фильтрация. Filtration
       listOfDatums = findRightFaucet utxos
   case listOfOrefAndCh of
     [(oref, ch)] -> do
-                logInfo @String $ "Right api key founded"
-                let lookups = Constraints.unspentOutputs utxos <>
-                              Constraints.otherScript (faucetValidator)
-                    tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData Key1
-                ledgerTx <- submitTxConstraintsWith @Fauceting lookups tx
-                void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
-                logInfo @String $ "collected gifts"
-    _ ->  logInfo @String $ "no faucets "  ++ (show listOfDatums)
+      logInfo @String $ "Faucet founded"
+      case selectRedeemer (fpApiKey fp) ch of -- Проверка api ключа. Cheking api key
+        Nothing -> logError @String "Bad datum"
+        Just (red, dat) -> do
+          let lookups =
+                Constraints.unspentOutputs utxos
+                  <> Constraints.otherScript (faucetValidator)
+              -- Ограничение, в котором говорим что скрипт нам должен выплатить все что у него есть
+              -- A constraints saying that the script must pay us everything it has
+              tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData red
+              tx' = case red of
+                Key1 -> returnMerg ch dat 2_000_000
+                Key2 -> returnMerg ch dat 3_000_000
+                AnotherKey -> returnMerg ch dat 1_000_000
+          ledgerTx <- submitTxConstraintsWith @Fauceting lookups (tx <> tx')
+          void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
+          logInfo @String $ "collected gifts using " ++ show red
+    _ -> logInfo @String $ "no faucets " ++ (show listOfDatums)
+  where
+    -- Получение, числа Ada на скрипте
+    -- Getting, Ada number on the script
+    amount a = getLovelace $ fromValue $ _ciTxOutValue a
+    -- Вычисление сдачи, в соответсвии с апи ключом
+    -- Calculation of change, according to the api key
+    returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
 
-
+-- Схема
+-- Schema
 type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" UpdateParams
-
 
 endpoints :: Contract () FaucetSchema Text ()
 endpoints = awaitPromise (grab' `select` start') >> endpoints
   where
     grab' = endpoint @"grab" grab
-    start' = endpoint @"start" startFaucet'
+    start' = endpoint @"start" startFaucet
 
-
-
-
-
-
-startFaucet :: Contract w s Text ()
-startFaucet = do
-
-  logInfo @String $ "started faucet" 
+-- Создание контракта раздачи
+-- Creating Faucet's contract
+createFaucetContract :: Contract w s Text ()
+createFaucetContract = do
+  logInfo @String $ "started faucet"
   logInfo @String $ "script address: " ++ show faucetAddress
 
-
-data UpdateParams = UpdateParams { newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, ToJSON, FromJSON, ToSchema)
+-- Изменение параметров. Добавление Ada и ключей.
+-- Changing Parameters. Adding Ada and keys.
+data UpdateParams = UpdateParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, ToJSON, FromJSON, ToSchema)
 
 updateFaucet :: UpdateParams -> Contract w s Text ()
 updateFaucet (UpdateParams amount newKeys) = do
@@ -167,10 +205,7 @@ updateFaucet (UpdateParams amount newKeys) = do
       logInfo @String $ "script address: " ++ show faucetAddress
     _ -> logError @String "faucet already started"
 
-
-startFaucet' :: UpdateParams -> Contract w s Text ()
-startFaucet' up = startFaucet >> updateFaucet up
-
-      
-    
-
+-- Старт раздающего
+-- Faucet start
+startFaucet :: UpdateParams -> Contract w s Text ()
+startFaucet up = createFaucetContract >> updateFaucet up
