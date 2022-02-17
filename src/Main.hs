@@ -1,4 +1,6 @@
 module Main where
 
+import Trace (testReach2Ada)
+
 main :: IO ()
-main = putStrLn "Hello, Haskell!"
+main = testReach2Ada
