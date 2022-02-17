@@ -4,4 +4,4 @@ import Spec.Trace
 import Test.Tasty
 
 main :: IO ()
-main = defaultMain tests
+main = defaultMain $ testGroup "faucet tests" [testsSuc, testsFail]
