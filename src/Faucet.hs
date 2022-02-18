@@ -196,33 +196,8 @@ grab fp = do
     -- Calculation of change, according to the api key
     returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
 
-{-grabForce :: Contract w s Text ()
-grabForce = do
-  pkh <- unPaymentPubKeyHash <$> Contract.ownPaymentPubKeyHash
-  utxos <- utxosAt faucetAddress
-  let listOfOrefAndCh = findFaucet utxos
-  case listOfOrefAndCh of
-    [(oref, _)] -> do
-      logInfo @String $ "Faucet founded"
-      let lookups =
-            Constraints.unspentOutputs utxos
-              <> Constraints.otherScript (faucetValidator)
-          -- Ограничение, в котором говорим что скрипт нам должен выплатить все что у него есть
-          -- A constraints saying that the script must pay us everything it has
-          tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData (Key1 1 pkh)
-      {-tx' = case red of
-        Key1 -> returnMerg ch dat 2_000_000
-        Key2 -> returnMerg ch dat 3_000_000
-        AnotherKey -> returnMerg ch dat 1_000_000 -}
-      ledgerTx <- submitTxConstraintsWith @Fauceting lookups tx
-      void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
-      logInfo @String $ "collected gifts"
-    _ -> logInfo @String $ "no faucets" -}
-
 grabWithError :: FaucetParams -> Contract w GrabSchema Text ()
 grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
-
--- grabForce' = endpoint @"grabForce" $ const grabForce
 
 -- Создание контракта раздачи
 -- Creating Faucet's contract
@@ -252,6 +227,8 @@ updateFaucet (StartParams amount newKeys) = do
 startFaucet :: StartParams -> Contract w StartSchema Text ()
 startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (createFaucetContract >> updateFaucet up)
 
+-- Схемы
+-- Schemas
 type StartSchema = Endpoint "start" StartParams
 
 type GrabSchema = Endpoint "grab" FaucetParams

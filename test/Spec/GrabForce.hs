@@ -16,7 +16,7 @@ module Spec.GrabForce (grabForceEndpoints) where
 
 import Control.Monad (void)
 import Data.Text (Text)
-import Faucet (FaucetRedeemer (..), FaucetSchema, Fauceting, faucetAddress, faucetValidator, findFaucet, grabWithError, startFaucet)
+import Faucet (FaucetRedeemer (..), Fauceting, faucetAddress, faucetValidator, findFaucet)
 import Ledger
 import Ledger.Constraints as Constraints
 import Plutus.Contract as Contract
@@ -43,11 +43,7 @@ grabForce = do
       logInfo @String $ "collected gifts"
     _ -> logInfo @String $ "no faucets"
 
-type GrabForceSchema = FaucetSchema .\/ Endpoint "grabForce" ()
+type GrabForceSchema = Endpoint "grabForce" ()
 
 grabForceEndpoints :: Contract () GrabForceSchema Text ()
-grabForceEndpoints = selectList [grab', start', grabForce'] >> grabForceEndpoints
-  where
-    grab' = endpoint @"grab" grabWithError
-    start' = endpoint @"start" startFaucet
-    grabForce' = endpoint @"grabForce" $ const grabForce
+grabForceEndpoints = awaitPromise (endpoint @"grabForce" $ const grabForce) >> grabForceEndpoints

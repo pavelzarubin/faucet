@@ -46,10 +46,10 @@ emuConfSuc =
 myTraceSuc :: EmulatorTrace ()
 myTraceSuc = do
   Extras.logInfo $ "START TRACE"
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
-  h3 <- activateContractWallet (knownWallet 3) endpoints
-  h4 <- activateContractWallet (knownWallet 4) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
+  h3 <- activateContractWallet (knownWallet 3) grabEndpoint
+  h4 <- activateContractWallet (knownWallet 4) grabEndpoint
   Extras.logInfo $ "FIRST WALLET START FAUCET SCRIPT"
   callEndpoint @"start" h1 $
     StartParams
@@ -68,17 +68,14 @@ myTraceSuc = do
   void $ waitNSlots 1
   Extras.logInfo $ "END TRACE"
 
-runMyTraceSuc :: IO ()
-runMyTraceSuc = runEmulatorTraceIO' def emuConfSuc myTraceSuc
-
 ------------------------------------------------------------------------------------
 -- Tests with failed fauceting. No ada on the script
 -- Тесты с неудачной раздачей. Нет ada на скрипте
 myTraceFail1 :: EmulatorTrace ()
 myTraceFail1 = do
   Extras.logInfo $ "START TRACE"
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
   Extras.logInfo $ "FIRST WALLET TRY START FAUCET SCRIPT, BUT CANT CAUSE HAS NOT 10 ADA"
   callEndpoint @"start" h1 $
     StartParams
@@ -101,9 +98,6 @@ emuConfFail1 =
              ]
        )
 
-runMyTraceFail1 :: IO ()
-runMyTraceFail1 = runEmulatorTraceIO' def emuConfFail1 myTraceFail1
-
 testsFail1 :: TestTree
 testsFail1 =
   checkPredicateOptions
@@ -120,8 +114,8 @@ testsFail1 =
 myTraceFail2 :: EmulatorTrace ()
 myTraceFail2 = do
   Extras.logInfo $ "START TRACE"
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
   Extras.logInfo $ "FIRST WALLET TRY FAUCET SCRIPT"
   callEndpoint @"start" h1 $
     StartParams
@@ -144,9 +138,6 @@ emuConfFail2 =
              ]
        )
 
-runMyTraceFail2 :: IO ()
-runMyTraceFail2 = runEmulatorTraceIO' def emuConfFail2 myTraceFail2
-
 testsFail2 :: TestTree
 testsFail2 =
   checkPredicateOptions
@@ -164,7 +155,7 @@ testsFail2 =
 grabForceTrace :: EmulatorTrace ()
 grabForceTrace = do
   Extras.logInfo $ "START TRACE"
-  h1 <- activateContractWallet (knownWallet 1) grabForceEndpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
   h2 <- activateContractWallet (knownWallet 2) grabForceEndpoints
   Extras.logInfo $ "FIRST WALLET TRY FAUCET SCRIPT"
   callEndpoint @"start" h1 $
@@ -177,9 +168,6 @@ grabForceTrace = do
   callEndpoint @"grabForce" h2 $ ()
   void $ waitNSlots 1
   Extras.logInfo $ "END TRACE"
-
-runGrabForceTrace :: IO ()
-runGrabForceTrace = runEmulatorTraceIO' def def grabForceTrace
 
 grabForceTests :: TestTree
 grabForceTests =
