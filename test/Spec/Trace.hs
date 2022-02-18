@@ -2,7 +2,7 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Spec.Trace where
+module Spec.Trace (grabForceTests, testsFail1, testsFail2, testsSuc) where
 
 import Control.Lens
 import Control.Monad.Freer.Extras as Extras
@@ -13,6 +13,7 @@ import Faucet
 import Ledger.Ada
 import Plutus.Contract.Test
 import Plutus.Trace
+import Spec.GrabForce
 import Test.Tasty
 
 --------------------------------
@@ -155,3 +156,37 @@ testsFail2 =
         .&&. walletFundsChange (knownWallet 2) (lovelaceValueOf 0)
     )
     myTraceFail2
+
+-------------------------------------------------------
+
+-- Тест с неудачной раздачей. Валидатор блокирует попытку украсть все с баланса скрипта.
+-- A test with an unsuccessful fauceting. Validator blocks attempt to steal everything from script balance.
+grabForceTrace :: EmulatorTrace ()
+grabForceTrace = do
+  Extras.logInfo $ "START TRACE"
+  h1 <- activateContractWallet (knownWallet 1) grabForceEndpoints
+  h2 <- activateContractWallet (knownWallet 2) grabForceEndpoints
+  Extras.logInfo $ "FIRST WALLET TRY FAUCET SCRIPT"
+  callEndpoint @"start" h1 $
+    StartParams
+      { newAmount = 10_000_000,
+        newDat = FaucetDatum 123 456
+      }
+  void $ waitNSlots 1
+  Extras.logInfo $ "SECOND WALLET TRY GRAB ADA, BUT VALIDATOR BLOCK WRONG ACTION"
+  callEndpoint @"grabForce" h2 $ ()
+  void $ waitNSlots 1
+  Extras.logInfo $ "END TRACE"
+
+runGrabForceTrace :: IO ()
+runGrabForceTrace = runEmulatorTraceIO' def def grabForceTrace
+
+grabForceTests :: TestTree
+grabForceTests =
+  checkPredicateOptions
+    defaultCheckOptions
+    "failed fauceting, because validator block bad action"
+    ( walletFundsChange (knownWallet 1) (lovelaceValueOf (-10_000_000))
+        .&&. walletFundsChange (knownWallet 2) (lovelaceValueOf 0)
+    )
+    grabForceTrace
