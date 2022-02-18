@@ -54,3 +54,23 @@ traceReach1Ada = do
   callEndpoint @"grab" h2 $ FaucetParams 1
   s <- void $ waitNSlots 2
   Extras.logInfo $ "reached " ++ show s
+
+traceReach1AdaWithTwoSchemas :: EmulatorTrace ()
+traceReach1AdaWithTwoSchemas = do
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
+  callEndpoint @"start" h1 $
+    StartParams
+      { newAmount = 10_000_000,
+        newDat = FaucetDatum 123 456
+      }
+  void $ waitNSlots 1
+  callEndpoint @"grab" h2 $ FaucetParams 1
+  void $ waitNSlots 2
+  h3 <- activateContractWallet (knownWallet 1) grabEndpoint
+  callEndpoint @"grab" h3 $ FaucetParams 1
+  s <- void $ waitNSlots 2
+  Extras.logInfo $ "reached " ++ show s
+
+testTraceReach1AdaWithTwoSchemas :: IO ()
+testTraceReach1AdaWithTwoSchemas = runEmulatorTraceIO traceReach1AdaWithTwoSchemas

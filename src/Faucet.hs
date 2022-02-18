@@ -260,3 +260,13 @@ updateFaucet (StartParams amount newKeys) = do
 -- Faucet start
 startFaucet :: StartParams -> Contract w s Text ()
 startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (createFaucetContract >> updateFaucet up)
+
+type StartSchema = Endpoint "start" StartParams
+
+type GrabSchema = Endpoint "grab" FaucetParams
+
+startEndpoint :: Contract () StartSchema Text ()
+startEndpoint = awaitPromise (endpoint @"start" startFaucet) >> startEndpoint
+
+grabEndpoint :: Contract () GrabSchema Text ()
+grabEndpoint = awaitPromise (endpoint @"grab" grabWithError) >> grabEndpoint
