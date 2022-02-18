@@ -41,14 +41,58 @@ PlutusTx.unstableMakeIsData ''FaucetDatum
 
 -- Редимер, отражает варианты выплат
 -- Redeemer, contains payment options
-data FaucetRedeemer = Key1 | Key2 | AnotherKey deriving (Show, ToJSON, FromJSON, Generic, ToSchema)
+data FaucetRedeemer
+  = Key1
+      { key :: !Integer,
+        phk :: !PubKeyHash
+      }
+  | Key2
+      { key :: !Integer,
+        phk :: !PubKeyHash
+      }
+  | AnotherKey
+      { phk :: !PubKeyHash
+      }
+  deriving (Show, ToJSON, FromJSON, Generic)
 
 PlutusTx.unstableMakeIsData ''FaucetRedeemer
 
--- Валидатор,  принимает все.
--- Validator, always accept all.
+-- Валидатор. Проверяет что всего может быть два входа и число ADA на выходе, оставшихся на скрипте, в соответвии с ключами.
+-- Validator сhecks that there can be a total of two inputs and the number of ADA on the output left on the script, according to the keys.
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator _ _ _ = True
+mkFaucetValidator dat red ctx =
+  traceIfFalse "num of more than 2" twoInputs
+    && case red of
+      (Key1 key1 phk1) ->
+        traceIfFalse "api key not equal to first api key" (key1 == fstApi dat)
+          && traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk1 2_000_000 inputFunds)
+      (Key2 key2 phk2) ->
+        traceIfFalse "api key not equal to second api key" (key2 == sndApi dat)
+          && traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk2 3_000_000 inputFunds)
+      (AnotherKey phk3) -> traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk3 1_000_000 inputFunds)
+  where
+    info :: TxInfo
+    info = scriptContextTxInfo ctx
+
+    inputsTr :: [TxInInfo]
+    inputsTr = txInfoInputs info
+
+    outputsTr :: [TxOut]
+    outputsTr = txInfoOutputs info
+
+    twoInputs :: Bool
+    twoInputs = length inputsTr <= 2
+
+    inputFunds :: Maybe Integer
+    inputFunds = do
+      txin <- findOwnInput ctx
+      return $ getLovelace . fromValue . txOutValue . txInInfoResolved $ txin
+
+    oneOfOutputsMustWith :: PubKeyHash -> Integer -> Maybe Integer -> Bool
+    oneOfOutputsMustWith p i (Just m) = any f outputsTr && m >= i
+      where
+        f x = (getLovelace . fromValue . txOutValue $ x) == (m - i) && (toPubKeyHash . txOutAddress $ x) /= (Just p)
+    oneOfOutputsMustWith _ _ Nothing = False
 
 ------------------------------------------------------------------
 data Fauceting
@@ -98,18 +142,18 @@ findRightFaucet utxos = f <$> Map.toList utxos
 
 -- Функция для опредленеия редимера.
 -- A function for determining the redeemer.
-selectRedeemer :: Integer -> ChainIndexTxOut -> Maybe (FaucetRedeemer, FaucetDatum)
-selectRedeemer k ch = case _ciTxOutDatum ch of
+selectRedeemer :: PubKeyHash -> Integer -> ChainIndexTxOut -> Maybe (FaucetRedeemer, FaucetDatum)
+selectRedeemer pkh k ch = case _ciTxOutDatum ch of
   Left _ -> Nothing
   Right (Datum d) -> case (PlutusTx.fromBuiltinData d :: Maybe FaucetDatum) of
     Nothing -> Nothing
     Just (FaucetDatum k1 k2) ->
       if k1 == k
-        then Just (Key1, (FaucetDatum k1 k2))
+        then Just (Key1 k pkh, (FaucetDatum k1 k2))
         else
           if k2 == k
-            then Just (Key2, (FaucetDatum k1 k2))
-            else Just (AnotherKey, (FaucetDatum k1 k2))
+            then Just (Key2 k pkh, (FaucetDatum k1 k2))
+            else Just (AnotherKey pkh, (FaucetDatum k1 k2))
 
 -- Апи ключ, который используем когда хотим получить Ada
 -- The api key we use when we want to get Ada
@@ -119,13 +163,14 @@ newtype FaucetParams = FaucetParams {fpApiKey :: Integer} deriving (Generic, ToJ
 -- Grab function. Getting Ada from a script
 grab :: FaucetParams -> Contract w s Text ()
 grab fp = do
+  pkh <- unPaymentPubKeyHash <$> Contract.ownPaymentPubKeyHash
   utxos <- utxosAt faucetAddress -- Получение неизрасходованных выходов транзакции по адресу. Get the unspent transaction outputs at an address.
   let listOfOrefAndCh = findFaucet utxos -- Фильтрация. Filtration
       listOfDatums = findRightFaucet utxos
   case listOfOrefAndCh of
     [(oref, ch)] -> do
       logInfo @String $ "Faucet founded"
-      case selectRedeemer (fpApiKey fp) ch of -- Проверка api ключа. Cheking api key
+      case selectRedeemer pkh (fpApiKey fp) ch of -- Проверка api ключа. Cheking api key
         Nothing -> logError @String "Bad datum"
         Just (red, dat) -> do
           let lookups =
@@ -135,9 +180,9 @@ grab fp = do
               -- A constraints saying that the script must pay us everything it has
               tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData red
               tx' = case red of
-                Key1 -> returnMerg ch dat 2_000_000
-                Key2 -> returnMerg ch dat 3_000_000
-                AnotherKey -> returnMerg ch dat 1_000_000
+                Key1 _ _ -> returnMerg ch dat 2_000_000
+                Key2 _ _ -> returnMerg ch dat 3_000_000
+                AnotherKey _ -> returnMerg ch dat 1_000_000
           ledgerTx <- submitTxConstraintsWith @Fauceting lookups (tx <> tx')
           void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
           logInfo @String $ "collected gifts using " ++ show red
@@ -150,18 +195,43 @@ grab fp = do
     -- Calculation of change, according to the api key
     returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
 
+{-grabForce :: Contract w s Text ()
+grabForce = do
+  pkh <- unPaymentPubKeyHash <$> Contract.ownPaymentPubKeyHash
+  utxos <- utxosAt faucetAddress
+  let listOfOrefAndCh = findFaucet utxos
+  case listOfOrefAndCh of
+    [(oref, _)] -> do
+      logInfo @String $ "Faucet founded"
+      let lookups =
+            Constraints.unspentOutputs utxos
+              <> Constraints.otherScript (faucetValidator)
+          -- Ограничение, в котором говорим что скрипт нам должен выплатить все что у него есть
+          -- A constraints saying that the script must pay us everything it has
+          tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData (Key1 1 pkh)
+      {-tx' = case red of
+        Key1 -> returnMerg ch dat 2_000_000
+        Key2 -> returnMerg ch dat 3_000_000
+        AnotherKey -> returnMerg ch dat 1_000_000 -}
+      ledgerTx <- submitTxConstraintsWith @Fauceting lookups tx
+      void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
+      logInfo @String $ "collected gifts"
+    _ -> logInfo @String $ "no faucets" -}
+
 grabWithError :: FaucetParams -> Contract w s Text ()
 grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
 
 -- Схема
 -- Schema
-type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParams
+type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParams -- .\/ Endpoint "grabForce" ()
 
 endpoints :: Contract () FaucetSchema Text ()
 endpoints = awaitPromise (grab' `select` start') >> endpoints
   where
     grab' = endpoint @"grab" grabWithError
     start' = endpoint @"start" startFaucet
+
+-- grabForce' = endpoint @"grabForce" $ const grabForce
 
 -- Создание контракта раздачи
 -- Creating Faucet's contract
