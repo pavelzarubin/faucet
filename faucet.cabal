@@ -72,7 +72,7 @@ test-suite faucet-tests
   type: exitcode-stdio-1.0
   main-is: Spec.hs
   hs-source-dirs: test
-  other-modules:    Spec.Trace
+  other-modules:    Spec.Trace, Spec.GrabForce
   default-language: Haskell2010
   ghc-options:         -Wall -fobject-code -fno-ignore-interface-pragmas -fno-omit-interface-pragmas
   build-depends:        base >=4.14.1.0
