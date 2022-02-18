@@ -15,8 +15,8 @@ testReach2Ada = runEmulatorTraceIO traceReach2Ada
 
 traceReach2Ada :: EmulatorTrace ()
 traceReach2Ada = do
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
@@ -29,8 +29,8 @@ traceReach2Ada = do
 
 traceReach3Ada :: EmulatorTrace ()
 traceReach3Ada = do
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
@@ -43,8 +43,8 @@ traceReach3Ada = do
 
 traceReach1Ada :: EmulatorTrace ()
 traceReach1Ada = do
-  h1 <- activateContractWallet (knownWallet 1) endpoints
-  h2 <- activateContractWallet (knownWallet 2) endpoints
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,

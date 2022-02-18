@@ -17,6 +17,7 @@ module Faucet where
 import Control.Monad hiding (fmap)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Map as Map
+import qualified Data.OpenApi as OpenApi
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Ledger hiding (singleton)
@@ -27,7 +28,7 @@ import Playground.Contract (ToSchema)
 import Plutus.Contract as Contract
 import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
-import Prelude (Semigroup (..), Show (..), String)
+import Prelude (Eq, Semigroup (..), Show (..), String)
 
 -- Датум, храним в нем оба два ключа апи
 -- Datum, contains api keys
@@ -35,7 +36,7 @@ data FaucetDatum = FaucetDatum
   { fstApi :: !Integer,
     sndApi :: !Integer
   }
-  deriving (Show, ToJSON, FromJSON, Generic, ToSchema)
+  deriving (Show, ToJSON, FromJSON, Prelude.Eq, Generic, ToSchema, OpenApi.ToSchema)
 
 PlutusTx.unstableMakeIsData ''FaucetDatum
 
@@ -157,7 +158,7 @@ selectRedeemer pkh k ch = case _ciTxOutDatum ch of
 
 -- Апи ключ, который используем когда хотим получить Ada
 -- The api key we use when we want to get Ada
-newtype FaucetParams = FaucetParams {fpApiKey :: Integer} deriving (Generic, ToJSON, FromJSON, ToSchema)
+newtype FaucetParams = FaucetParams {fpApiKey :: Integer} deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema)
 
 -- Функция grab. Получение Ada от скрипта
 -- Grab function. Getting Ada from a script
@@ -218,18 +219,8 @@ grabForce = do
       logInfo @String $ "collected gifts"
     _ -> logInfo @String $ "no faucets" -}
 
-grabWithError :: FaucetParams -> Contract w s Text ()
+grabWithError :: FaucetParams -> Contract w GrabSchema Text ()
 grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
-
--- Схема
--- Schema
-type FaucetSchema = Endpoint "grab" FaucetParams .\/ Endpoint "start" StartParams -- .\/ Endpoint "grabForce" ()
-
-endpoints :: Contract () FaucetSchema Text ()
-endpoints = awaitPromise (grab' `select` start') >> endpoints
-  where
-    grab' = endpoint @"grab" grabWithError
-    start' = endpoint @"start" startFaucet
 
 -- grabForce' = endpoint @"grabForce" $ const grabForce
 
@@ -242,7 +233,7 @@ createFaucetContract = do
 
 -- Изменение параметров. Добавление Ada и ключей.
 -- Changing Parameters. Adding Ada and keys.
-data StartParams = StartParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, ToJSON, FromJSON, ToSchema)
+data StartParams = StartParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema)
 
 updateFaucet :: StartParams -> Contract w s Text ()
 updateFaucet (StartParams amount newKeys) = do
@@ -258,7 +249,7 @@ updateFaucet (StartParams amount newKeys) = do
 
 -- Старт раздающего
 -- Faucet start
-startFaucet :: StartParams -> Contract w s Text ()
+startFaucet :: StartParams -> Contract w StartSchema Text ()
 startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (createFaucetContract >> updateFaucet up)
 
 type StartSchema = Endpoint "start" StartParams
