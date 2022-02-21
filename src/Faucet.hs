@@ -28,7 +28,7 @@ import Playground.Contract (ToSchema)
 import Plutus.Contract as Contract
 import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
-import Prelude (Eq, Semigroup (..), Show (..), String)
+import Prelude (Eq, Semigroup (..), Show (..), String, last)
 
 -- Датум, храним в нем оба два ключа апи
 -- Datum, contains api keys
@@ -39,6 +39,9 @@ data FaucetDatum = FaucetDatum
   deriving (Show, ToJSON, FromJSON, Prelude.Eq, Generic, ToSchema, OpenApi.ToSchema)
 
 PlutusTx.unstableMakeIsData ''FaucetDatum
+
+instance PlutusTx.Prelude.Eq FaucetDatum where
+  (FaucetDatum k1 k2) == (FaucetDatum a1 a2) = (k1 == a1) && (k2 == a2)
 
 -- Редимер, отражает варианты выплат
 -- Redeemer, contains payment options
@@ -56,13 +59,16 @@ data FaucetRedeemer
       }
   deriving (Show, ToJSON, FromJSON, Generic)
 
+getLovelaceFromValueOf :: Value -> Integer
+getLovelaceFromValueOf = getLovelace . fromValue
+
 PlutusTx.unstableMakeIsData ''FaucetRedeemer
 
 -- Валидатор. Проверяет что всего может быть два входа и число ADA на выходе, оставшихся на скрипте, в соответвии с ключами.
 -- Validator сhecks that there can be a total of two inputs and the number of ADA on the output left on the script, according to the keys.
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
 mkFaucetValidator dat red ctx =
-  traceIfFalse "num of more than 2" twoInputs
+  traceIfFalse "num of more than 2" twoInputs && traceIfFalse "bad output datum" correctOutputDatum
     && case red of
       (Key1 key1 phk1) ->
         traceIfFalse "api key not equal to first api key" (key1 == fstApi dat)
@@ -87,13 +93,27 @@ mkFaucetValidator dat red ctx =
     inputFunds :: Maybe Integer
     inputFunds = do
       txin <- findOwnInput ctx
-      return $ getLovelace . fromValue . txOutValue . txInInfoResolved $ txin
+      return $ getLovelaceFromValueOf . txOutValue . txInInfoResolved $ txin
 
     oneOfOutputsMustWith :: PubKeyHash -> Integer -> Maybe Integer -> Bool
     oneOfOutputsMustWith p i (Just m) = any f outputsTr && m >= i
       where
-        f x = (getLovelace . fromValue . txOutValue $ x) == (m - i) && (toPubKeyHash . txOutAddress $ x) /= (Just p)
+        f x = (getLovelaceFromValueOf . txOutValue $ x) == (m - i) && (toPubKeyHash . txOutAddress $ x) /= (Just p)
     oneOfOutputsMustWith _ _ Nothing = False
+
+    outputDatum :: FaucetDatum
+    outputDatum = case getContinuingOutputs ctx of
+      [o] -> case txOutDatumHash o of
+        Nothing -> traceError "wrong output type"
+        Just h -> case findDatum h info of
+          Nothing -> traceError "datum not found"
+          Just (Datum d) -> case PlutusTx.fromBuiltinData d of
+            Just dat' -> dat'
+            Nothing -> traceError "error decoding data"
+      _ -> traceError "expected exactly one continuing output"
+
+    correctOutputDatum :: Bool
+    correctOutputDatum = outputDatum == dat
 
 ------------------------------------------------------------------
 data Fauceting
@@ -168,8 +188,9 @@ grab fp = do
   utxos <- utxosAt faucetAddress -- Получение неизрасходованных выходов транзакции по адресу. Get the unspent transaction outputs at an address.
   let listOfOrefAndCh = findFaucet utxos -- Фильтрация. Filtration
       listOfDatums = findRightFaucet utxos
-  case listOfOrefAndCh of
-    [(oref, ch)] -> do
+  if not $ null listOfOrefAndCh
+    then do
+      let (oref, ch) = Prelude.last listOfOrefAndCh
       logInfo @String $ "Faucet founded"
       case selectRedeemer pkh (fpApiKey fp) ch of -- Проверка api ключа. Cheking api key
         Nothing -> logError @String "Bad datum"
@@ -187,11 +208,11 @@ grab fp = do
           ledgerTx <- submitTxConstraintsWith @Fauceting lookups (tx <> tx')
           void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
           logInfo @String $ "collected gifts using " ++ show red
-    _ -> logInfo @String $ "no faucets " ++ (show listOfDatums)
+    else logInfo @String $ "no faucets " ++ (show listOfDatums)
   where
     -- Получение, числа Ada на скрипте
     -- Getting, Ada number on the script
-    amount a = getLovelace $ fromValue $ _ciTxOutValue a
+    amount a = getLovelaceFromValueOf $ _ciTxOutValue a
     -- Вычисление сдачи, в соответсвии с апи ключом
     -- Calculation of change, according to the api key
     returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
@@ -199,33 +220,23 @@ grab fp = do
 grabWithError :: FaucetParams -> Contract w GrabSchema Text ()
 grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
 
--- Создание контракта раздачи
--- Creating Faucet's contract
-createFaucetContract :: Contract w s Text ()
-createFaucetContract = do
-  logInfo @String $ "started faucet"
-  logInfo @String $ "script address: " ++ show faucetAddress
-
 -- Изменение параметров. Добавление Ada и ключей.
 -- Changing Parameters. Adding Ada and keys.
 data StartParams = StartParams {newAmount :: !Integer, newDat :: FaucetDatum} deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema)
 
-updateFaucet :: StartParams -> Contract w s Text ()
-updateFaucet (StartParams amount newKeys) = do
-  m <- utxosAt faucetAddress
-  let c = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData newKeys) $ Ada.lovelaceValueOf amount
-  case Map.toList m of
-    [] -> do
-      ledgerTx <- submitTxConstraints typedValidator c
-      awaitTxConfirmed $ getCardanoTxId ledgerTx
-      logInfo @String $ "set new keys to " ++ (show $ fstApi newKeys) ++ " and " ++ (show $ sndApi newKeys)
-      logInfo @String $ "script address: " ++ show faucetAddress
-    _ -> logError @String "faucet already started"
-
 -- Старт раздающего
 -- Faucet start
+startFaucet' :: StartParams -> Contract w StartSchema Text ()
+startFaucet' (StartParams amount newKeys) = do
+  let c = Constraints.mustPayToTheScript (newKeys) $ Ada.lovelaceValueOf amount
+  ledgerTx <- submitTxConstraints typedValidator c
+  awaitTxConfirmed $ getCardanoTxId ledgerTx
+  logInfo @String $ "set new keys to " ++ (show $ fstApi newKeys) ++ " and " ++ (show $ sndApi newKeys)
+  logInfo @String $ "script address: " ++ show faucetAddress
+  logInfo @String $ "started faucet"
+
 startFaucet :: StartParams -> Contract w StartSchema Text ()
-startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (createFaucetContract >> updateFaucet up)
+startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (startFaucet' up)
 
 -- Схемы
 -- Schemas
