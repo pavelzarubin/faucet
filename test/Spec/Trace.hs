@@ -2,7 +2,7 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Spec.Trace (grabForceTests, testsFail1, testsFail2, testsSuc) where
+module Spec.Trace (grabForceTests, testsFail1, testsFail2, testsSuc, testsFail3) where
 
 import Control.Lens
 import Control.Monad.Freer.Extras as Extras
@@ -54,7 +54,8 @@ myTraceSuc = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   Extras.logInfo $ "SECOND WALLET GRAB 1 ADA"
@@ -80,7 +81,8 @@ myTraceFail1 = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   Extras.logInfo $ "SECOND WALLET TRY GRAB ADA, BUT SCRIPT HAS NOT ADA"
@@ -120,7 +122,8 @@ myTraceFail2 = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 2_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   Extras.logInfo $ "SECOND WALLET TRY GRAB ADA, BUT SCRIPT HAS NOT 3 ADA"
@@ -161,7 +164,8 @@ grabForceTrace = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   Extras.logInfo $ "SECOND WALLET TRY GRAB ADA, BUT VALIDATOR BLOCK WRONG ACTION"
@@ -178,3 +182,39 @@ grabForceTests =
         .&&. walletFundsChange (knownWallet 2) (lovelaceValueOf 0)
     )
     grabForceTrace
+
+------------------------------------------------------------------------------
+-- Tests with failed fauceting. User can't pick up ADA because he has to wait an hour
+-- Тесты с неудачной раздачей. Пользователь не может забрать ADA, так как должен подождатть час.
+myTraceFail3 :: EmulatorTrace ()
+myTraceFail3 = do
+  Extras.logInfo $ "START TRACE"
+  h1 <- activateContractWallet (knownWallet 1) startEndpoint
+  h2 <- activateContractWallet (knownWallet 2) grabEndpoint
+  Extras.logInfo $ "FIRST WALLET TRY FAUCET SCRIPT"
+  callEndpoint @"start" h1 $
+    StartParams
+      { newAmount = 10_000_000,
+        keyOne = 123,
+        keyTwo = 456
+      }
+  void $ waitNSlots 1
+  Extras.logInfo $ "SECOND WALLET GRAB ADA"
+  callEndpoint @"grab" h2 $ FaucetParams 123
+  void $ waitNSlots 1
+  Extras.logInfo $ "SECOND WALLET  TRY GRAB ADA, BUT CANT BECAUSE NEED WAIT 1 HOUR"
+  callEndpoint @"grab" h2 $ FaucetParams 123
+  void $ waitNSlots 1
+  Extras.logInfo $ "END TRACE"
+
+testsFail3 :: TestTree
+testsFail3 =
+  checkPredicateOptions
+    (defaultCheckOptions & emulatorConfig .~ emuConfSuc)
+    "Failed fauceting. User can't pick up ADA because he has to wait an hour"
+    ( walletFundsChange (knownWallet 1) (lovelaceValueOf (-10_000_000))
+        .&&. walletFundsChange (knownWallet 2) (lovelaceValueOf 2_000_000)
+    )
+    myTraceFail3
+
+-------------------------------------------------------

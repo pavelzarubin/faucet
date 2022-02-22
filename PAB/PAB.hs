@@ -17,7 +17,6 @@ import Control.Monad.Freer (interpret)
 import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Default (def)
 import qualified Data.OpenApi as OpenApi
-import Data.Text.Prettyprint.Doc (Pretty (..), viaShow)
 import Faucet
 import GHC.Generics (Generic)
 import Ledger.Value (TokenName)
@@ -26,6 +25,7 @@ import qualified Plutus.PAB.Effects.Contract.Builtin as Builtin
 import Plutus.PAB.Simulator (SimulatorEffectHandlers)
 import qualified Plutus.PAB.Simulator as Simulator
 import qualified Plutus.PAB.Webserver.Server as PAB.Server
+import Prettyprinter (Pretty (..), viaShow)
 import Wallet.Emulator.Wallet (knownWallet)
 
 data FaucetContracts = Init StartParams | Grab FaucetParams
@@ -62,7 +62,8 @@ runSimulator = void $
         startParams =
           StartParams
             { newAmount = 10_000_000,
-              newDat = FaucetDatum 123 456
+              keyOne = 123,
+              keyTwo = 456
             }
     void $ Simulator.activateContract wallet1 $ Init startParams
 

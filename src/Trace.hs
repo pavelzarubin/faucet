@@ -20,7 +20,8 @@ traceReach2Ada = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   callEndpoint @"grab" h2 $ FaucetParams 123
@@ -34,7 +35,8 @@ traceReach3Ada = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   callEndpoint @"grab" h2 $ FaucetParams 456
@@ -48,7 +50,8 @@ traceReach1Ada = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   callEndpoint @"grab" h2 $ FaucetParams 1
@@ -62,7 +65,8 @@ traceReach1AdaWithTwoSchemas = do
   callEndpoint @"start" h1 $
     StartParams
       { newAmount = 10_000_000,
-        newDat = FaucetDatum 123 456
+        keyOne = 123,
+        keyTwo = 456
       }
   void $ waitNSlots 1
   callEndpoint @"grab" h2 $ FaucetParams 1

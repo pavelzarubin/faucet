@@ -1,15 +1,10 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE NoImplicitPrelude #-}
 
 module Spec.GrabForce (grabForceEndpoints) where
@@ -36,7 +31,7 @@ grabForce = do
       logInfo @String $ "Faucet founded"
       let lookups =
             Constraints.unspentOutputs utxos
-              <> Constraints.otherScript (faucetValidator)
+              <> Constraints.otherScript faucetValidator
           tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData (Key1 1 pkh)
       ledgerTx <- submitTxConstraintsWith @Fauceting lookups tx
       void $ awaitTxConfirmed $ getCardanoTxId ledgerTx
