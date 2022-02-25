@@ -37,7 +37,8 @@ library
                       , plutus-use-cases
                       , prettyprinter
                       , lens
-                        , openapi3
+                      , openapi3
+                      , serialise
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -fobject-code -fno-ignore-interface-pragmas -fno-omit-interface-pragmas -fno-strictness -fno-spec-constr -fno-specialise
@@ -65,6 +66,9 @@ executable faucet-exec
                       , prettyprinter
                       , lens
                       , openapi3
+                      , serialise
+
+
 
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -95,6 +99,7 @@ executable PAB
                       , plutus-pab
                       , freer-simple
                       , openapi3
+                      , req
 
   hs-source-dirs:      PAB
   default-language:    Haskell2010

@@ -57,16 +57,16 @@ myTraceSuc = do
         keyOne = 123,
         keyTwo = 456
       }
-  void $ waitNSlots 1
+  void $ waitNSlots 2
   Extras.logInfo $ "SECOND WALLET GRAB 1 ADA"
   callEndpoint @"grab" h2 $ FaucetParams 1
-  void $ waitNSlots 1
-  Extras.logInfo $ "SECOND WALLET GRAB 2 ADA"
+  void $ waitNSlots 2
+  Extras.logInfo $ "THIRD WALLET GRAB 2 ADA"
   callEndpoint @"grab" h3 $ FaucetParams 123
-  void $ waitNSlots 1
-  Extras.logInfo $ "SECOND WALLET GRAB 3 ADA"
+  void $ waitNSlots 2
+  Extras.logInfo $ "FOURTH WALLET GRAB 3 ADA"
   callEndpoint @"grab" h4 $ FaucetParams 456
-  void $ waitNSlots 1
+  void $ waitNSlots 2
   Extras.logInfo $ "END TRACE"
 
 ------------------------------------------------------------------------------------

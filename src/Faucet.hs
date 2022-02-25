@@ -14,8 +14,11 @@
 
 module Faucet where
 
+import Codec.Serialise
 import Control.Monad hiding (fmap)
 import Data.Aeson (FromJSON, ToJSON)
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.ByteString.Short as SBS
 import qualified Data.Map as Map
 import qualified Data.OpenApi as OpenApi
 import Data.Text (Text)
@@ -28,7 +31,7 @@ import Playground.Contract (ToSchema)
 import Plutus.Contract as Contract
 import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
-import Prelude (Eq, Semigroup (..), Show (..), String, last, lookup)
+import Prelude (Eq, Semigroup (..), Show (..), String, last)
 
 -- Датум, храним в нем оба два ключа апи
 -- Datum, contains api keys
@@ -73,6 +76,7 @@ PlutusTx.unstableMakeIsData ''FaucetRedeemer
 mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
 mkFaucetValidator dat red ctx =
   traceIfFalse "num of more than 2" twoInputs && traceIfFalse "bad output datum" correctOutputDatum
+    && traceIfFalse "bad time for validation" (validTime userTime)
     && case red of
       (Key1 key1 phk1) ->
         traceIfFalse "api key not equal to first api key" (key1 == fstApi dat)
@@ -105,6 +109,13 @@ mkFaucetValidator dat red ctx =
         f x = (getLovelaceFromValueOf . txOutValue $ x) == (m - i) && (toPubKeyHash . txOutAddress $ x) /= (Just p)
     oneOfOutputsMustWith _ _ Nothing = False
 
+    userTime :: Maybe POSIXTime
+    userTime = mkLookup (phk red) (usersDict outputDatum)
+
+    validTime :: Maybe POSIXTime -> Bool
+    validTime (Just userTime') = contains (txInfoValidRange info) $ from userTime'
+    validTime _ = False
+
     outputDatum :: FaucetDatum
     outputDatum = case getContinuingOutputs ctx of
       [o] -> case txOutDatumHash o of
@@ -125,14 +136,19 @@ mkLookup :: PlutusTx.Prelude.Eq t => t -> [(t, a)] -> Maybe a
 mkLookup a ((i, x) : xs) = if a == i then Just x else mkLookup a xs
 mkLookup _ [] = Nothing
 
+{-# INLINEABLE mkFindKey #-}
+mkFindKey :: [(a, POSIXTime)] -> POSIXTime -> Bool
+mkFindKey ((_, t') : s) t = t' <= t && (mkFindKey s t')
+mkFindKey [] _ = True
+
 {-# INLINEABLE correctDatums #-}
 correctDatums :: PubKeyHash -> FaucetDatum -> FaucetDatum -> Bool
 correctDatums pkh (FaucetDatum a1 a2 d1) (FaucetDatum b1 b2 d2) = (a1 == b1) && (a2 == b2) && checkDate timeInOldDatum timeInNewDatum
   where
     timeInOldDatum = mkLookup pkh d1
     timeInNewDatum = mkLookup pkh d2
-    checkDate (Just n1) (Just n2) = n1 + oneHour < n2
-    checkDate Nothing (Just _) = True
+    checkDate (Just n1) (Just n2) = n1 + oneHour < n2 && mkFindKey d1 n2
+    checkDate Nothing (Just n2) = mkFindKey d1 n2
     checkDate _ _ = False
 
 data Fauceting
@@ -157,6 +173,12 @@ faucetAddress = scriptAddress faucetValidator
 
 valHash :: ValidatorHash
 valHash = Scripts.validatorHash typedValidator
+
+script :: Script
+script = unValidatorScript faucetValidator
+
+faucetScriptShortBs :: SBS.ShortByteString
+faucetScriptShortBs = SBS.toShort . LBS.toStrict $ serialise script
 
 ------------------------------------------------------------------
 
@@ -232,7 +254,9 @@ grab fp = do
                       <> Constraints.otherScript faucetValidator
                   -- Ограничение, в котором говорим что скрипт нам должен выплатить все что у него есть
                   -- A constraints saying that the script must pay us everything it has
-                  tx = Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData red
+                  tx =
+                    (Constraints.mustSpendScriptOutput oref $ Redeemer $ PlutusTx.toBuiltinData red)
+                      <> (Constraints.mustValidateIn (from now))
                   newdat = updateDat pkh now dat
                   tx' = case red of
                     Key1 _ _ -> returnMerg ch newdat 2_000_000
@@ -266,7 +290,7 @@ startFaucet' (StartParams amount k1 k2) = do
   let c = Constraints.mustPayToTheScript dat $ Ada.lovelaceValueOf amount
   ledgerTx <- submitTxConstraints typedValidator c
   awaitTxConfirmed $ getCardanoTxId ledgerTx
-  logInfo @String $ "set new keys to " ++ (show k1) ++ " and " ++ (show k1)
+  logInfo @String $ "set new keys to " ++ (show k1) ++ " and " ++ (show k2)
   logInfo @String $ "script address: " ++ show faucetAddress
   logInfo @String $ "started faucet"
 

@@ -14,6 +14,7 @@ module PAB (runSimulator) where
 
 import Control.Monad (void)
 import Control.Monad.Freer (interpret)
+import Control.Monad.IO.Class (MonadIO (..))
 import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Default (def)
 import qualified Data.OpenApi as OpenApi
@@ -22,6 +23,7 @@ import GHC.Generics (Generic)
 import Ledger.Value (TokenName)
 import Plutus.PAB.Effects.Contract.Builtin (Builtin, BuiltinHandler (contractHandler), SomeBuiltin (..))
 import qualified Plutus.PAB.Effects.Contract.Builtin as Builtin
+import Plutus.PAB.Events.Contract
 import Plutus.PAB.Simulator (SimulatorEffectHandlers)
 import qualified Plutus.PAB.Simulator as Simulator
 import qualified Plutus.PAB.Webserver.Server as PAB.Server
@@ -31,8 +33,6 @@ import Wallet.Emulator.Wallet (knownWallet)
 data FaucetContracts = Init StartParams | Grab FaucetParams
   deriving stock (Show, Eq, Generic)
   deriving anyclass (OpenApi.ToSchema, ToJSON, FromJSON)
-
---deriving anyclass (OpenApi.ToSchema)
 
 instance Pretty FaucetContracts where
   pretty = viaShow
@@ -54,27 +54,31 @@ handlers =
 runSimulator :: IO ()
 runSimulator = void $
   Simulator.runSimulationWith handlers $ do
-    Simulator.logString @(Builtin FaucetContracts) "Starting plutus-starter PAB webserver on port 8080. Press enter to exit."
+    Simulator.logString @(Builtin FaucetContracts) "Starting plutus-starter PAB webserver on port 9080. Press enter to exit."
     shutdown <- PAB.Server.startServerDebug
 
     let wallet1 = knownWallet 1
         wallet2 = knownWallet 2
         startParams =
           StartParams
-            { newAmount = 10_000_000,
+            { newAmount = 100_000_000,
               keyOne = 123,
               keyTwo = 456
             }
-    void $ Simulator.activateContract wallet1 $ Init startParams
+    startId <- Simulator.activateContract wallet1 $ Init startParams
+
+    liftIO $ writeFile "start.cid" $ show $ unContractInstanceId startId
 
     Simulator.waitNSlots 1
 
-    void $ Simulator.activateContract wallet2 $ Grab (FaucetParams 123)
+    giverId <- Simulator.activateContract wallet2 $ Grab (FaucetParams 123)
+    liftIO $ writeFile "giver.cid" $ show $ unContractInstanceId giverId
+    void $ Simulator.waitNSlots 1
 
+    void $ liftIO getLine
     void $ Simulator.waitNSlots 1
 
     Simulator.logString @(Builtin FaucetContracts) "Balances at the end of the simulation"
     b <- Simulator.currentBalances
     Simulator.logBalances @(Builtin FaucetContracts) b
-
     shutdown
