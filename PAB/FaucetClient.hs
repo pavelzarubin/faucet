@@ -5,15 +5,20 @@
 
 module FaucetClient where
 
+import Control.Exception
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Text
+import Data.UUID
 import Faucet
 import GHC.Generics
+import Ledger.Value hiding (tokenName)
 import Network.HTTP.Req
 import PAB
 import Plutus.PAB.Webserver.Types
-import Wallet.Emulator.Wallet (knownWallet)
+import Text.Printf
+import Wallet.Emulator.Wallet
+import Wallet.Types
 
 data ActivateContractParams t = ActivateContractParams
   { contents :: t,
@@ -21,13 +26,13 @@ data ActivateContractParams t = ActivateContractParams
   }
   deriving (FromJSON, ToJSON, Generic)
 
-startTest :: IO ()
-startTest = runReq defaultHttpConfig $ do
+startTest :: StartParams -> Wallet -> IO ()
+startTest sp wallet = runReq defaultHttpConfig $ do
   response <-
     req
       POST
       (http "127.0.0.1" /: "api" /: "contract" /: "activate")
-      (ReqBodyJson testStartInstance)
+      (ReqBodyJson $ ContractActivationArgs {caID = ActivateContractParams sp "Init", caWallet = Just wallet})
       bsResponse
       (port 9080)
   liftIO $
@@ -36,16 +41,28 @@ startTest = runReq defaultHttpConfig $ do
         then "sale started" ++ (show response)
         else "error starting"
 
-testStartInstance :: ContractActivationArgs (ActivateContractParams StartParams)
-testStartInstance = ContractActivationArgs {caID = ActivateContractParams (StartParams 100_000_000 123 456) "Init", caWallet = Just (knownWallet 1)}
-
-grabTest :: IO ()
-grabTest = runReq defaultHttpConfig $ do
+grabTest :: FaucetParams -> Wallet -> IO ()
+grabTest fp wallet = runReq defaultHttpConfig $ do
   response <-
     req
       POST
       (http "127.0.0.1" /: "api" /: "contract" /: "activate")
-      (ReqBodyJson testGrabInstance)
+      (ReqBodyJson $ ContractActivationArgs {caID = ActivateContractParams fp "Grab", caWallet = Just wallet})
+      bsResponse
+      (port 9080)
+  liftIO $
+    putStrLn $
+      if responseStatusCode response == 200
+        then "funds grabbed" ++ (show response)
+        else "error starting"
+
+startSimulatorTest :: IO ()
+startSimulatorTest = runReq defaultHttpConfig $ do
+  response <-
+    req
+      POST
+      (http "127.0.0.1" /: "api" /: "contract" /: "activate")
+      (ReqBodyJson testStartSimulatorInstance)
       bsResponse
       (port 9080)
   liftIO $
@@ -54,5 +71,26 @@ grabTest = runReq defaultHttpConfig $ do
         then "sale started" ++ (show response)
         else "error starting"
 
-testGrabInstance :: ContractActivationArgs (ActivateContractParams FaucetParams)
-testGrabInstance = ContractActivationArgs {caID = ActivateContractParams (FaucetParams 456) "Grab", caWallet = Just (knownWallet 2)}
+testStartSimulatorInstance :: ContractActivationArgs (ActivateContractParams StartParams)
+testStartSimulatorInstance = ContractActivationArgs {caID = ActivateContractParams (StartParams 100_000_000 123 456 "AAA") "Init", caWallet = Just (knownWallet 3)}
+
+grabSimulatorTest :: IO ()
+grabSimulatorTest = runReq defaultHttpConfig $ do
+  response <-
+    req
+      POST
+      (http "127.0.0.1" /: "api" /: "contract" /: "activate")
+      (ReqBodyJson testGrabSimulatorInstance)
+      bsResponse
+      (port 9080)
+  liftIO $
+    putStrLn $
+      if responseStatusCode response == 200
+        then "funds grabbed" ++ (show response)
+        else "error starting"
+
+testGrabSimulatorInstance :: ContractActivationArgs (ActivateContractParams FaucetParams)
+testGrabSimulatorInstance = ContractActivationArgs {caID = ActivateContractParams (FaucetParams 456 nftTest) "Grab", caWallet = Just (knownWallet 4)}
+
+nftTest :: AssetClass
+nftTest = AssetClass ("9441d44110f119f51a39adf898fe6436d20c15a71b96aaac242a5731", "AAA")

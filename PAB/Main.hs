@@ -2,4 +2,4 @@ module Main where
 
 import PAB
 
-main = runSimulator
+main = startPAB
