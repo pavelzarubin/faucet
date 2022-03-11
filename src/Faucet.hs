@@ -5,6 +5,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
@@ -14,24 +15,24 @@
 
 module Faucet where
 
-import Codec.Serialise
 import Control.Monad hiding (fmap)
 import Data.Aeson (FromJSON, ToJSON)
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Short as SBS
 import qualified Data.Map as Map
+import Data.Monoid (Last (..))
 import qualified Data.OpenApi as OpenApi
-import Data.Text (Text)
+import Data.Text (Text, pack)
 import GHC.Generics (Generic)
 import Ledger hiding (singleton)
 import Ledger.Ada as Ada
 import Ledger.Constraints as Constraints
 import qualified Ledger.Typed.Scripts as Scripts
+import Ledger.Value hiding (currencySymbol, tokenName)
 import Playground.Contract (ToSchema)
 import Plutus.Contract as Contract
+import Plutus.Contracts.Currency (CurrencyError, OneShotCurrency, currencySymbol, mintContract)
 import qualified PlutusTx
 import PlutusTx.Prelude hiding (Semigroup (..), unless)
-import Prelude (Eq, Semigroup (..), Show (..), String, last)
+import Prelude (Eq, Ord, Semigroup (..), Show (..), String, last)
 
 -- Датум, храним в нем оба два ключа апи
 -- Datum, contains api keys
@@ -73,10 +74,13 @@ PlutusTx.unstableMakeIsData ''FaucetRedeemer
 
 -- Валидатор. Проверяет что всего может быть два входа и число ADA на выходе, оставшихся на скрипте, в соответвии с ключами.
 -- Validator сhecks that there can be a total of two inputs and the number of ADA on the output left on the script, according to the keys.
-mkFaucetValidator :: FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
-mkFaucetValidator dat red ctx =
-  traceIfFalse "num of more than 2" twoInputs && traceIfFalse "bad output datum" correctOutputDatum
+mkFaucetValidator :: AssetClass -> FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
+mkFaucetValidator nft dat red ctx =
+  traceIfFalse "num of more than 2" twoInputs
+    && traceIfFalse "bad output datum" correctOutputDatum
     && traceIfFalse "bad time for validation" (validTime userTime)
+    && traceIfFalse "no token on script input" inputHasToken
+    && traceIfFalse "no token on script output" outputHasToken
     && case red of
       (Key1 key1 phk1) ->
         traceIfFalse "api key not equal to first api key" (key1 == fstApi dat)
@@ -94,6 +98,22 @@ mkFaucetValidator dat red ctx =
 
     outputsTr :: [TxOut]
     outputsTr = txInfoOutputs info
+
+    ownInput :: TxOut
+    ownInput = case findOwnInput ctx of
+      Nothing -> traceError "own input not found"
+      Just i -> txInInfoResolved i
+
+    ownOutput :: TxOut
+    ownOutput = case getContinuingOutputs ctx of
+      [o] -> o
+      _ -> traceError "expected only one output"
+
+    inputHasToken :: Bool
+    inputHasToken = assetClassValueOf (txOutValue ownInput) nft == 1
+
+    outputHasToken :: Bool
+    outputHasToken = assetClassValueOf (txOutValue ownOutput) nft == 1
 
     twoInputs :: Bool
     twoInputs = length inputsTr <= 2
@@ -157,28 +177,24 @@ instance Scripts.ValidatorTypes Fauceting where
   type DatumType Fauceting = FaucetDatum
   type RedeemerType Fauceting = FaucetRedeemer
 
-typedValidator :: Scripts.TypedValidator Fauceting
-typedValidator =
+typedValidator :: AssetClass -> Scripts.TypedValidator Fauceting
+typedValidator nft =
   Scripts.mkTypedValidator @Fauceting
-    $$(PlutusTx.compile [||mkFaucetValidator||])
+    ( $$(PlutusTx.compile [||mkFaucetValidator||])
+        `PlutusTx.applyCode` PlutusTx.liftCode nft
+    )
     $$(PlutusTx.compile [||wrap||])
   where
     wrap = Scripts.wrapValidator @FaucetDatum @FaucetRedeemer
 
-faucetValidator :: Validator
-faucetValidator = Scripts.validatorScript typedValidator
+faucetValidator :: AssetClass -> Validator
+faucetValidator = Scripts.validatorScript . typedValidator
 
-faucetAddress :: Address
-faucetAddress = scriptAddress faucetValidator
+faucetAddress :: AssetClass -> Address
+faucetAddress = scriptAddress . faucetValidator
 
-valHash :: ValidatorHash
-valHash = Scripts.validatorHash typedValidator
-
-script :: Script
-script = unValidatorScript faucetValidator
-
-faucetScriptShortBs :: SBS.ShortByteString
-faucetScriptShortBs = SBS.toShort . LBS.toStrict $ serialise script
+valHash :: AssetClass -> ValidatorHash
+valHash = Scripts.validatorHash . typedValidator
 
 ------------------------------------------------------------------
 
@@ -229,29 +245,33 @@ updateDat pkh now (FaucetDatum k1 k2 dict) = FaucetDatum k1 k2 dict2
 
 -- Апи ключ, который используем когда хотим получить Ada
 -- The api key we use when we want to get Ada
-newtype FaucetParams = FaucetParams {fpApiKey :: Integer} deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema)
+data FaucetParams = FaucetParams
+  { fpApiKey :: Integer,
+    fpToken :: AssetClass
+  }
+  deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema, Prelude.Ord)
 
 -- Функция grab. Получение Ada от скрипта
 -- Grab function. Getting Ada from a script
 grab :: FaucetParams -> Contract w s Text ()
-grab fp = do
+grab FaucetParams {..} = do
   pkh <- unPaymentPubKeyHash <$> Contract.ownPaymentPubKeyHash
   now <- currentTime
-  utxos <- utxosAt faucetAddress -- Получение неизрасходованных выходов транзакции по адресу. Get the unspent transaction outputs at an address.
+  utxos <- utxosAt (faucetAddress fpToken) -- Получение неизрасходованных выходов транзакции по адресу. Get the unspent transaction outputs at an address.
   let listOfOrefAndCh = findFaucet utxos -- Фильтрация. Filtration
       listOfDatums = findRightFaucet utxos
   if not $ null listOfOrefAndCh
     then do
       let (oref, ch) = Prelude.last listOfOrefAndCh
       logInfo @String $ "Faucet founded"
-      case selectRedeemer pkh (fpApiKey fp) ch of -- Проверка api ключа. Cheking api key
+      case selectRedeemer pkh fpApiKey ch of -- Проверка api ключа. Cheking api key
         Nothing -> logError @String "Bad datum"
         Just (red, dat) ->
           if checkTime pkh now dat
             then do
               let lookups =
                     Constraints.unspentOutputs utxos
-                      <> Constraints.otherScript faucetValidator
+                      <> Constraints.otherScript (faucetValidator fpToken)
                   -- Ограничение, в котором говорим что скрипт нам должен выплатить все что у него есть
                   -- A constraints saying that the script must pay us everything it has
                   tx =
@@ -271,40 +291,53 @@ grab fp = do
     -- Получение, числа Ada на скрипте
     -- Getting, Ada number on the script
     amount a = getLovelaceFromValueOf $ _ciTxOutValue a
+
+    token = assetClassValue fpToken 1
     -- Вычисление сдачи, в соответсвии с апи ключом
     -- Calculation of change, according to the api key
-    returnMerg b dat n = Constraints.mustPayToOtherScript valHash (Datum $ PlutusTx.toBuiltinData dat) $ Ada.lovelaceValueOf (amount b - n)
-
-grabWithError :: FaucetParams -> Contract w GrabSchema Text ()
-grabWithError fp = handleError (\e -> logError @String $ "Catching error: " ++ show e) (grab fp)
-
--- Изменение параметров. Добавление Ada и ключей.
--- Changing Parameters. Adding Ada and keys.
-data StartParams = StartParams {newAmount :: !Integer, keyOne :: !Integer, keyTwo :: !Integer} deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema)
-
--- Старт раздающего
--- Faucet start
-startFaucet' :: StartParams -> Contract w StartSchema Text ()
-startFaucet' (StartParams amount k1 k2) = do
-  let dat = FaucetDatum k1 k2 []
-  let c = Constraints.mustPayToTheScript dat $ Ada.lovelaceValueOf amount
-  ledgerTx <- submitTxConstraints typedValidator c
-  awaitTxConfirmed $ getCardanoTxId ledgerTx
-  logInfo @String $ "set new keys to " ++ (show k1) ++ " and " ++ (show k2)
-  logInfo @String $ "script address: " ++ show faucetAddress
-  logInfo @String $ "started faucet"
-
-startFaucet :: StartParams -> Contract w StartSchema Text ()
-startFaucet up = handleError (\e -> logError @String $ "Catching error: " ++ show e) (startFaucet' up)
-
--- Схемы
--- Schemas
-type StartSchema = Endpoint "start" StartParams
+    returnMerg b dat n = Constraints.mustPayToOtherScript (valHash fpToken) (Datum $ PlutusTx.toBuiltinData dat) $ (Ada.lovelaceValueOf (amount b - n)) <> token
 
 type GrabSchema = Endpoint "grab" FaucetParams
 
-startEndpoint :: Contract () StartSchema Text ()
-startEndpoint = awaitPromise (endpoint @"start" startFaucet) >> startEndpoint
+data StartParams = StartParams
+  { newAmount :: !Integer,
+    keyOne :: !Integer,
+    keyTwo :: !Integer,
+    tokenName :: !TokenName
+  }
+  deriving (Generic, Prelude.Eq, ToJSON, FromJSON, ToSchema, Show, OpenApi.ToSchema, Prelude.Ord)
+
+-- Старт раздающего
+-- Faucet start
+startFaucet :: StartParams -> Contract w s Text AssetClass
+startFaucet StartParams {..} = do
+  let dat = FaucetDatum keyOne keyTwo []
+  pkh <- Contract.ownPaymentPubKeyHash
+  osc <- mapError (pack . show) (mintContract pkh [(tokenName, 1)] :: Contract w s CurrencyError OneShotCurrency)
+  let nft = AssetClass (currencySymbol osc, tokenName)
+      c = Constraints.mustPayToTheScript dat $ (Ada.lovelaceValueOf newAmount) <> (assetClassValue nft 1)
+  ledgerTx <- submitTxConstraints (typedValidator nft) c
+  awaitTxConfirmed $ getCardanoTxId ledgerTx
+  logInfo @String $ "set new keys to " ++ (show keyOne) ++ " and " ++ (show keyTwo)
+  logInfo @String $ "script address: " ++ show (faucetAddress nft)
+  logInfo @String $ "token parameter: " ++ show nft
+  logInfo @String $ "started faucet"
+  return nft
+
+type StartSchema = Endpoint "start" StartParams
+
+startEndpoint :: Contract () StartSchema Text AssetClass
+startEndpoint = awaitPromise start' >> startEndpoint
+  where
+    start' = endpoint @"start" startFaucet
 
 grabEndpoint :: Contract () GrabSchema Text ()
-grabEndpoint = awaitPromise (endpoint @"grab" grabWithError) >> grabEndpoint
+grabEndpoint = awaitPromise grab' >> grabEndpoint
+  where
+    grab' = endpoint @"grab" grab
+
+runFaucet :: StartParams -> Contract (Last AssetClass) StartSchema Text ()
+runFaucet sp = do
+  nft <- startFaucet sp
+  tell $ Last $ Just nft
+  return ()
