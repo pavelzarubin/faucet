@@ -76,28 +76,21 @@ PlutusTx.unstableMakeIsData ''FaucetRedeemer
 -- Validator сhecks that there can be a total of two inputs and the number of ADA on the output left on the script, according to the keys.
 mkFaucetValidator :: AssetClass -> FaucetDatum -> FaucetRedeemer -> ScriptContext -> Bool
 mkFaucetValidator nft dat red ctx =
-  traceIfFalse "num of more than 2" twoInputs
-    && traceIfFalse "bad output datum" correctOutputDatum
+  traceIfFalse "bad output datum" correctOutputDatum
     && traceIfFalse "bad time for validation" (validTime userTime)
     && traceIfFalse "no token on script input" inputHasToken
     && traceIfFalse "no token on script output" outputHasToken
     && case red of
-      (Key1 key1 phk1) ->
+      (Key1 key1 _) ->
         traceIfFalse "api key not equal to first api key" (key1 == fstApi dat)
-          && traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk1 2_000_000 inputFunds)
-      (Key2 key2 phk2) ->
+          && traceIfFalse "wrong lovelace paid" (outputFunds 2_000_000)
+      (Key2 key2 _) ->
         traceIfFalse "api key not equal to second api key" (key2 == sndApi dat)
-          && traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk2 3_000_000 inputFunds)
-      (AnotherKey phk3) -> traceIfFalse "wrong lovelace paid" (oneOfOutputsMustWith phk3 1_000_000 inputFunds)
+          && traceIfFalse "wrong lovelace paid" (outputFunds 3_000_000)
+      (AnotherKey _) -> traceIfFalse "wrong lovelace paid" (outputFunds 1_000_000)
   where
     info :: TxInfo
     info = scriptContextTxInfo ctx
-
-    inputsTr :: [TxInInfo]
-    inputsTr = txInfoInputs info
-
-    outputsTr :: [TxOut]
-    outputsTr = txInfoOutputs info
 
     ownInput :: TxOut
     ownInput = case findOwnInput ctx of
@@ -115,19 +108,12 @@ mkFaucetValidator nft dat red ctx =
     outputHasToken :: Bool
     outputHasToken = assetClassValueOf (txOutValue ownOutput) nft == 1
 
-    twoInputs :: Bool
-    twoInputs = length inputsTr <= 2
+    inputFunds :: Integer
+    inputFunds =
+      getLovelaceFromValueOf . txOutValue $ ownInput
 
-    inputFunds :: Maybe Integer
-    inputFunds = do
-      txin <- findOwnInput ctx
-      return $ getLovelaceFromValueOf . txOutValue . txInInfoResolved $ txin
-
-    oneOfOutputsMustWith :: PubKeyHash -> Integer -> Maybe Integer -> Bool
-    oneOfOutputsMustWith p i (Just m) = any f outputsTr && m >= i
-      where
-        f x = (getLovelaceFromValueOf . txOutValue $ x) == (m - i) && (toPubKeyHash . txOutAddress $ x) /= (Just p)
-    oneOfOutputsMustWith _ _ Nothing = False
+    outputFunds :: Integer -> Bool
+    outputFunds i = inputFunds >= i && (getLovelaceFromValueOf . txOutValue $ ownOutput) == (inputFunds - i)
 
     userTime :: Maybe POSIXTime
     userTime = mkLookup (phk red) (usersDict outputDatum)
@@ -137,15 +123,14 @@ mkFaucetValidator nft dat red ctx =
     validTime _ = False
 
     outputDatum :: FaucetDatum
-    outputDatum = case getContinuingOutputs ctx of
-      [o] -> case txOutDatumHash o of
+    outputDatum =
+      case txOutDatumHash ownOutput of
         Nothing -> traceError "wrong output type"
         Just h -> case findDatum h info of
           Nothing -> traceError "datum not found"
           Just (Datum d) -> case PlutusTx.fromBuiltinData d of
             Just dat' -> dat'
             Nothing -> traceError "error decoding data"
-      _ -> traceError "expected exactly one continuing output"
 
     correctOutputDatum :: Bool
     correctOutputDatum = correctDatums (phk red) dat outputDatum
