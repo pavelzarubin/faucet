@@ -51,7 +51,7 @@ instance Builtin.HasDefinitions FaucetContracts where
 
 handlers :: SimulatorEffectHandlers (Builtin FaucetContracts)
 handlers =
-  Simulator.mkSimulatorHandlers def def $
+  Simulator.mkSimulatorHandlers def $
     interpret (contractHandler Builtin.handleBuiltin)
 
 runSimulator :: IO ()
